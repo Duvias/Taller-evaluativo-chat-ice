@@ -11,16 +11,21 @@ public final class Client {
     }
 
     public static void main(String[] args) {
+        // Ice 3.8 for Java exposes public Communicator constructors.
         try (Communicator communicator = new Communicator(args)) {
-            ChatServicePrx chatService = ChatServicePrx.createProxy(
-                    communicator,
-                    NetworkConfig.chatServiceProxy()
-            );
+            ChatServicePrx chatService = createChatServiceProxy(communicator);
 
             System.out.println("Chat multimedia CLI");
             System.out.println("Proxy Ice: " + NetworkConfig.chatServiceProxy());
 
             new Cli(communicator, chatService).run();
         }
+    }
+
+    static ChatServicePrx createChatServiceProxy(Communicator communicator) {
+        return ChatServicePrx.createProxy(
+                communicator,
+                NetworkConfig.chatServiceProxy()
+        );
     }
 }

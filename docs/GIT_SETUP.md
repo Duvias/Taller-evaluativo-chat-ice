@@ -1,48 +1,43 @@
 # Flujo Git recomendado
 
-## Caso A: el repositorio remoto ya existe y estás parado en él
+## Base común en `develop`
 
-Copia el contenido de esta base a la raíz del repositorio y ejecuta:
+La infraestructura compartida debe integrarse antes que las funcionalidades individuales:
 
-```bash
-git status
-git switch -c develop
-git add .
-git commit -m "chore: initialize distributed chat project structure"
-git push -u origin develop
-```
-
-Si `develop` ya existe en remoto:
-
-```bash
-git fetch origin
+```powershell
 git switch develop
 git pull origin develop
+```
+
+Después de copiar/aplicar las correcciones comunes:
+
+```powershell
+.\gradlew.bat clean build
 git add .
-git commit -m "chore: initialize distributed chat project structure"
+git commit -m "chore: stabilize Gradle and Ice project base"
 git push origin develop
 ```
 
 ## Ramas de trabajo
 
-Después de subir la base:
+Cada integrante actualiza su rama desde `develop`:
 
-```bash
-git switch develop
-git pull origin develop
-git switch -c feature/ice-usuarios
+```powershell
+git switch feature/voz-udp
+git merge develop
+.\gradlew.bat clean build
 ```
 
-```bash
-git switch develop
-git pull origin develop
-git switch -c feature/salas-archivos
+Ramas sugeridas:
+
+```text
+feature/ice-usuarios
+feature/salas-archivos
+feature/voz-udp
 ```
 
-```bash
-git switch develop
-git pull origin develop
-git switch -c feature/voz-udp
-```
+Cada feature entra a `develop` mediante Pull Request/Merge Request.
 
-Cada integrante trabaja únicamente en su rama y abre PR/MR hacia `develop`.
+## Regla importante
+
+No subir `.gradle/` ni `**/build/`. Sí subir siempre el Gradle Wrapper completo, incluido `gradle/wrapper/gradle-wrapper.jar`.

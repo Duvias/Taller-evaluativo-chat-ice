@@ -5,6 +5,8 @@
 # Java / IDE
 *.class
 *.jar
+# The Gradle Wrapper JAR is source-controlled by design.
+!gradle/wrapper/gradle-wrapper.jar
 *.war
 *.ear
 *.iml

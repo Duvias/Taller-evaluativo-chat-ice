@@ -8,23 +8,18 @@ import com.zeroc.Ice.ObjectAdapter;
 
 public final class Server {
 
+    static final String ADAPTER_NAME = "ChatAdapter";
+    static final Identity CHAT_SERVICE_IDENTITY = new Identity("chatService", "");
+
     private Server() {
     }
 
     public static void main(String[] args) {
         Thread mainThread = Thread.currentThread();
 
+        // Ice 3.8 for Java exposes public Communicator constructors.
         try (Communicator communicator = new Communicator(args)) {
-            ObjectAdapter adapter = communicator.createObjectAdapterWithEndpoints(
-                    "ChatAdapter",
-                    "tcp -h 0.0.0.0 -p " + NetworkConfig.ICE_PORT
-            );
-
-            adapter.add(
-                    new ChatServiceImpl(),
-                    new Identity("chatService", "")
-            );
-
+            ObjectAdapter adapter = createAdapter(communicator);
             adapter.activate();
 
             System.out.printf(
@@ -45,5 +40,19 @@ public final class Server {
 
             communicator.waitForShutdown();
         }
+    }
+
+    static ObjectAdapter createAdapter(Communicator communicator) {
+        ObjectAdapter adapter = communicator.createObjectAdapterWithEndpoints(
+                ADAPTER_NAME,
+                "tcp -h 0.0.0.0 -p " + NetworkConfig.ICE_PORT
+        );
+
+        adapter.add(
+                new ChatServiceImpl(),
+                CHAT_SERVICE_IDENTITY
+        );
+
+        return adapter;
     }
 }
