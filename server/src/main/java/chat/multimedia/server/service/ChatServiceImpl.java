@@ -1,3 +1,4 @@
+
 package chat.multimedia.server.service;
 
 import chat.multimedia.server.file.FileManager;
@@ -30,24 +31,76 @@ public class ChatServiceImpl implements ChatService {
         this.voiceManager = new VoiceManager();
     }
 
+    // =========================
+    // INTEGRANTE 1: USUARIOS
+    // =========================
+
     @Override
     public void login(
             String nickname,
             ClientCallbackPrx callback,
             Current current
     ) throws UserAlreadyExists {
-        // TODO Integrante 1
+
+        if (nickname == null || nickname.isBlank()) {
+            throw new IllegalArgumentException(
+                    "El nickname no puede estar vacío."
+            );
+        }
+
+        if (callback == null) {
+            throw new IllegalArgumentException(
+                    "El callback no puede ser null."
+            );
+        }
+
+        nickname = nickname.trim();
+
+        if (!userManager.register(nickname, callback)) {
+            throw new UserAlreadyExists(nickname);
+        }
+
+        for (var entry : userManager.connectedUsers().entrySet()) {
+            if (!entry.getKey().equals(nickname)) {
+                try {
+                    entry.getValue().userConnected(nickname);
+                } catch (com.zeroc.Ice.LocalException exception) {
+                    System.err.println(
+                            "No se pudo notificar a " + entry.getKey()
+                    );
+                }
+            }
+        }
+
+        System.out.println("[LOGIN] Usuario conectado: " + nickname);
     }
 
     @Override
     public void logout(String nickname, Current current) {
-        // TODO Integrante 1
+
+        ClientCallbackPrx removed = userManager.remove(nickname);
+
+        if (removed == null) {
+            return;
+        }
+
+        for (var entry : userManager.connectedUsers().entrySet()) {
+            try {
+                entry.getValue().userDisconnected(nickname);
+            } catch (com.zeroc.Ice.LocalException exception) {
+                System.err.println(
+                        "No se pudo notificar la desconexión a "
+                                + entry.getKey()
+                );
+            }
+        }
+
+        System.out.println("[LOGOUT] Usuario desconectado: " + nickname);
     }
 
     @Override
     public String[] getConnectedUsers(Current current) {
-        // TODO Integrante 1
-        return new String[0];
+        return userManager.getNicknames().toArray(new String[0]);
     }
 
     @Override
@@ -57,8 +110,30 @@ public class ChatServiceImpl implements ChatService {
             String message,
             Current current
     ) throws UserNotFound {
-        // TODO Integrante 1
+
+        if (sender == null || !userManager.isConnected(sender)) {
+            throw new UserNotFound(sender == null ? "" : sender);
+        }
+
+        ClientCallbackPrx receiverCallback = userManager.find(receiver);
+
+        if (receiverCallback == null) {
+            throw new UserNotFound(receiver == null ? "" : receiver);
+        }
+
+        try {
+            receiverCallback.receivePrivateMessage(sender, message);
+        } catch (com.zeroc.Ice.LocalException exception) {
+            System.err.println(
+                    "Error enviando mensaje privado a " + receiver
+            );
+            throw exception;
+        }
     }
+
+    // =========================
+    // INTEGRANTE 2: SALAS Y ARCHIVOS
+    // =========================
 
     @Override
     public void createRoom(
@@ -112,6 +187,10 @@ public class ChatServiceImpl implements ChatService {
     ) throws UserNotFound, RoomNotFound, NotInRoom {
         // TODO Integrante 2
     }
+
+    // =========================
+    // INTEGRANTE 3: LLAMADAS DE VOZ
+    // =========================
 
     @Override
     public void startCall(
