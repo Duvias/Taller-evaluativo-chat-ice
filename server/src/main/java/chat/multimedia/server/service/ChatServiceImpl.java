@@ -24,10 +24,24 @@ public class ChatServiceImpl implements ChatService {
     private final VoiceManager voiceManager;
 
     public ChatServiceImpl() {
-        this.userManager = new UserManager();
-        this.roomManager = new RoomManager();
-        this.fileManager = new FileManager();
-        this.voiceManager = new VoiceManager();
+        this(
+                new UserManager(),
+                new RoomManager(),
+                new FileManager(),
+                new VoiceManager()
+        );
+    }
+
+    ChatServiceImpl(
+            UserManager userManager,
+            RoomManager roomManager,
+            FileManager fileManager,
+            VoiceManager voiceManager
+    ) {
+        this.userManager = userManager;
+        this.roomManager = roomManager;
+        this.fileManager = fileManager;
+        this.voiceManager = voiceManager;
     }
 
     @Override
@@ -121,7 +135,23 @@ public class ChatServiceImpl implements ChatService {
             int port,
             Current current
     ) throws UserNotFound, CallError {
-        // TODO Integrante 3
+        requireConnectedUser(caller);
+        ClientCallbackPrx targetCallback = requireConnectedUser(target);
+
+        try {
+            voiceManager.startCall(caller, target, ip, port);
+        } catch (IllegalStateException exception) {
+            throw new CallError(exception.getMessage());
+        }
+
+        try {
+            targetCallback.incomingCall(caller, ip, port);
+        } catch (RuntimeException exception) {
+            rollbackPendingCall(caller, target);
+            throw new CallError(
+                    "Could not notify " + target + " about the incoming call."
+            );
+        }
     }
 
     @Override
@@ -132,7 +162,23 @@ public class ChatServiceImpl implements ChatService {
             int port,
             Current current
     ) throws UserNotFound, CallError {
-        // TODO Integrante 3
+        ClientCallbackPrx callerCallback = requireConnectedUser(caller);
+        requireConnectedUser(target);
+
+        try {
+            voiceManager.acceptCall(caller, target, ip, port);
+        } catch (IllegalStateException exception) {
+            throw new CallError(exception.getMessage());
+        }
+
+        try {
+            callerCallback.callAccepted(target, ip, port);
+        } catch (RuntimeException exception) {
+            rollbackActiveCall(target, caller);
+            throw new CallError(
+                    "Could not notify " + caller + " that the call was accepted."
+            );
+        }
     }
 
     @Override
@@ -141,7 +187,22 @@ public class ChatServiceImpl implements ChatService {
             String target,
             Current current
     ) throws UserNotFound, CallError {
-        // TODO Integrante 3
+        ClientCallbackPrx callerCallback = requireConnectedUser(caller);
+        requireConnectedUser(target);
+
+        try {
+            voiceManager.rejectCall(caller, target);
+        } catch (IllegalStateException exception) {
+            throw new CallError(exception.getMessage());
+        }
+
+        try {
+            callerCallback.callRejected(target);
+        } catch (RuntimeException exception) {
+            throw new CallError(
+                    "The call was rejected, but " + caller + " could not be notified."
+            );
+        }
     }
 
     @Override
@@ -150,7 +211,51 @@ public class ChatServiceImpl implements ChatService {
             String target,
             Current current
     ) throws UserNotFound, CallError {
-        // TODO Integrante 3
+        requireConnectedUser(user);
+        ClientCallbackPrx targetCallback = requireConnectedUser(target);
+
+        try {
+            voiceManager.endCall(user, target);
+        } catch (IllegalStateException exception) {
+            throw new CallError(exception.getMessage());
+        }
+
+        try {
+            targetCallback.callEnded(user);
+        } catch (RuntimeException exception) {
+            throw new CallError(
+                    "The call ended, but " + target + " could not be notified."
+            );
+        }
+    }
+
+    private ClientCallbackPrx requireConnectedUser(
+            String nickname
+    ) throws UserNotFound {
+        ClientCallbackPrx callback =
+                userManager.connectedUsers().get(nickname);
+
+        if (callback == null) {
+            throw new UserNotFound(nickname);
+        }
+
+        return callback;
+    }
+
+    private void rollbackPendingCall(String caller, String target) {
+        try {
+            voiceManager.rejectCall(caller, target);
+        } catch (IllegalStateException ignored) {
+            // The original callback failure is the error that matters here.
+        }
+    }
+
+    private void rollbackActiveCall(String user, String target) {
+        try {
+            voiceManager.endCall(user, target);
+        } catch (IllegalStateException ignored) {
+            // The original callback failure is the error that matters here.
+        }
     }
 
     @Override
