@@ -246,7 +246,6 @@ public class ChatServiceImpl implements ChatService {
         try {
             voiceManager.rejectCall(caller, target);
         } catch (IllegalStateException ignored) {
-            // The original callback failure is the error that matters here.
         }
     }
 
@@ -254,7 +253,6 @@ public class ChatServiceImpl implements ChatService {
         try {
             voiceManager.endCall(user, target);
         } catch (IllegalStateException ignored) {
-            // The original callback failure is the error that matters here.
         }
     }
 
