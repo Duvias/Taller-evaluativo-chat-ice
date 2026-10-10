@@ -1,3 +1,4 @@
+
 package chat.multimedia.server.service;
 
 import chat.multimedia.server.file.FileManager;
@@ -32,25 +33,76 @@ public class ChatServiceImpl implements ChatService {
         this.voiceManager = new VoiceManager();
     }
 
+    // =========================
+    // INTEGRANTE 1: USUARIOS
+    // =========================
+
     @Override
     public void login(
             String nickname,
             ClientCallbackPrx callback,
             Current current
     ) throws UserAlreadyExists {
-        // TODO Integrante 1
+
+        if (nickname == null || nickname.isBlank()) {
+            throw new IllegalArgumentException(
+                    "El nickname no puede estar vacío."
+            );
+        }
+
+        if (callback == null) {
+            throw new IllegalArgumentException(
+                    "El callback no puede ser null."
+            );
+        }
+
+        nickname = nickname.trim();
+
+        if (!userManager.register(nickname, callback)) {
+            throw new UserAlreadyExists(nickname);
+        }
+
+        for (var entry : userManager.connectedUsers().entrySet()) {
+            if (!entry.getKey().equals(nickname)) {
+                try {
+                    entry.getValue().userConnected(nickname);
+                } catch (com.zeroc.Ice.LocalException exception) {
+                    System.err.println(
+                            "No se pudo notificar a " + entry.getKey()
+                    );
+                }
+            }
+        }
+
+        System.out.println("[LOGIN] Usuario conectado: " + nickname);
     }
 
     @Override
     public void logout(String nickname, Current current) {
-        // TODO Integrante 1: después de retirar el callback del usuario, invocar
-        // roomManager.removeUserFromAllRooms(nickname) para limpiar membresías.
+
+        ClientCallbackPrx removed = userManager.remove(nickname);
+
+        if (removed == null) {
+            return;
+        }
+
+        for (var entry : userManager.connectedUsers().entrySet()) {
+            try {
+                entry.getValue().userDisconnected(nickname);
+            } catch (com.zeroc.Ice.LocalException exception) {
+                System.err.println(
+                        "No se pudo notificar la desconexión a "
+                                + entry.getKey()
+                );
+            }
+        }
+
+        System.out.println("[LOGOUT] Usuario desconectado: " + nickname);
     }
 
     @Override
     public String[] getConnectedUsers(Current current) {
-        // TODO Integrante 1
-        return new String[0];
+        return userManager.getNicknames().toArray(new String[0]);
     }
 
     @Override
@@ -60,8 +112,30 @@ public class ChatServiceImpl implements ChatService {
             String message,
             Current current
     ) throws UserNotFound {
-        // TODO Integrante 1
+
+        if (sender == null || !userManager.isConnected(sender)) {
+            throw new UserNotFound(sender == null ? "" : sender);
+        }
+
+        ClientCallbackPrx receiverCallback = userManager.find(receiver);
+
+        if (receiverCallback == null) {
+            throw new UserNotFound(receiver == null ? "" : receiver);
+        }
+
+        try {
+            receiverCallback.receivePrivateMessage(sender, message);
+        } catch (com.zeroc.Ice.LocalException exception) {
+            System.err.println(
+                    "Error enviando mensaje privado a " + receiver
+            );
+            throw exception;
+        }
     }
+
+    // =========================
+    // INTEGRANTE 2: SALAS Y ARCHIVOS
+    // =========================
 
     @Override
     public void createRoom(
@@ -140,51 +214,12 @@ public class ChatServiceImpl implements ChatService {
             FileChunk chunk,
             Current current
     ) throws UserNotFound, RoomNotFound, NotInRoom {
-        fileManager.validateChunk(chunk);
-        if (sender == null || !sender.equals(chunk.sender)) {
-            throw new IllegalArgumentException("El remitente del fragmento no coincide con el usuario autenticado.");
-        }
-
-        if (targetType == TargetType.User) {
-            ClientCallbackPrx senderCallback = userManager.connectedUsers().get(sender);
-            if (senderCallback == null) {
-                throw new UserNotFound(sender);
-            }
-            ClientCallbackPrx receiverCallback = userManager.connectedUsers().get(target);
-            if (receiverCallback == null) {
-                throw new UserNotFound(target);
-            }
-            try {
-                receiverCallback.receiveFileChunk(targetType, target, chunk);
-            } catch (LocalException exception) {
-                throw new UserNotFound(target);
-            }
-            return;
-        }
-
-        if (targetType == TargetType.Room) {
-            if (!roomManager.roomExists(target)) {
-                throw new RoomNotFound(target);
-            }
-            if (!roomManager.isMember(sender, target)) {
-                throw new NotInRoom(sender, target);
-            }
-            for (String member : roomManager.membersOf(target)) {
-                if (member.equals(sender)) {
-                    continue;
-                }
-                ClientCallbackPrx callback = userManager.connectedUsers().get(member);
-                if (callback != null) {
-                    try {
-                        callback.receiveFileChunk(targetType, target, chunk);
-                    } catch (LocalException ignored) {
-                    }
-                }
-            }
-            return;
-        }
-        throw new IllegalArgumentException("Tipo de destino de archivo desconocido.");
+        // TODO Integrante 2
     }
+
+    // =========================
+    // INTEGRANTE 3: LLAMADAS DE VOZ
+    // =========================
 
     @Override
     public void startCall(
