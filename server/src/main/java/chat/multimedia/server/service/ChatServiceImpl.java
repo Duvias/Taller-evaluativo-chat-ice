@@ -15,6 +15,8 @@ import distributed.chat.RoomNotFound;
 import distributed.chat.TargetType;
 import distributed.chat.UserAlreadyExists;
 import distributed.chat.UserNotFound;
+import com.zeroc.Ice.LocalException;
+import java.util.Set;
 
 public class ChatServiceImpl implements ChatService {
 
@@ -41,7 +43,8 @@ public class ChatServiceImpl implements ChatService {
 
     @Override
     public void logout(String nickname, Current current) {
-        // TODO Integrante 1
+        // TODO Integrante 1: después de retirar el callback del usuario, invocar
+        // roomManager.removeUserFromAllRooms(nickname) para limpiar membresías.
     }
 
     @Override
@@ -65,7 +68,9 @@ public class ChatServiceImpl implements ChatService {
             String roomName,
             Current current
     ) throws RoomAlreadyExists {
-        // TODO Integrante 2
+        if (!roomManager.createRoom(roomName)) {
+            throw new RoomAlreadyExists(roomName);
+        }
     }
 
     @Override
@@ -74,7 +79,9 @@ public class ChatServiceImpl implements ChatService {
             String roomName,
             Current current
     ) throws RoomNotFound {
-        // TODO Integrante 2
+        if (!roomManager.joinRoom(nickname, roomName)) {
+            throw new RoomNotFound(roomName);
+        }
     }
 
     @Override
@@ -83,13 +90,18 @@ public class ChatServiceImpl implements ChatService {
             String roomName,
             Current current
     ) throws RoomNotFound, NotInRoom {
-        // TODO Integrante 2
+        if (!roomManager.roomExists(roomName)) {
+            throw new RoomNotFound(roomName);
+        }
+        if (!roomManager.isMember(nickname, roomName)) {
+            throw new NotInRoom(nickname, roomName);
+        }
+        roomManager.leaveRoom(nickname, roomName);
     }
 
     @Override
     public String[] listRooms(Current current) {
-        // TODO Integrante 2
-        return new String[0];
+        return roomManager.listRooms();
     }
 
     @Override
@@ -99,7 +111,26 @@ public class ChatServiceImpl implements ChatService {
             String message,
             Current current
     ) throws RoomNotFound, NotInRoom {
-        // TODO Integrante 2
+        if (!roomManager.roomExists(roomName)) {
+            throw new RoomNotFound(roomName);
+        }
+        if (!roomManager.isMember(sender, roomName)) {
+            throw new NotInRoom(sender, roomName);
+        }
+        Set<String> members = roomManager.membersOf(roomName);
+        for (String member : members) {
+            if (member.equals(sender)) {
+                continue; // Do not echo a room message to its sender.
+            }
+            ClientCallbackPrx callback = userManager.connectedUsers().get(member);
+            if (callback != null) {
+                try {
+                    callback.receiveRoomMessage(roomName, sender, message);
+                } catch (LocalException ignored) {
+                    // A failed callback must not prevent delivery to other room members.
+                }
+            }
+        }
     }
 
     @Override
@@ -110,7 +141,51 @@ public class ChatServiceImpl implements ChatService {
             FileChunk chunk,
             Current current
     ) throws UserNotFound, RoomNotFound, NotInRoom {
-        // TODO Integrante 2
+        fileManager.validateChunk(chunk);
+        if (sender == null || !sender.equals(chunk.sender)) {
+            throw new IllegalArgumentException("El remitente del fragmento no coincide con el usuario autenticado.");
+        }
+
+        if (targetType == TargetType.User) {
+            ClientCallbackPrx senderCallback = userManager.connectedUsers().get(sender);
+            if (senderCallback == null) {
+                throw new UserNotFound(sender);
+            }
+            ClientCallbackPrx receiverCallback = userManager.connectedUsers().get(target);
+            if (receiverCallback == null) {
+                throw new UserNotFound(target);
+            }
+            try {
+                receiverCallback.receiveFileChunk(targetType, target, chunk);
+            } catch (LocalException exception) {
+                throw new UserNotFound(target);
+            }
+            return;
+        }
+
+        if (targetType == TargetType.Room) {
+            if (!roomManager.roomExists(target)) {
+                throw new RoomNotFound(target);
+            }
+            if (!roomManager.isMember(sender, target)) {
+                throw new NotInRoom(sender, target);
+            }
+            for (String member : roomManager.membersOf(target)) {
+                if (member.equals(sender)) {
+                    continue;
+                }
+                ClientCallbackPrx callback = userManager.connectedUsers().get(member);
+                if (callback != null) {
+                    try {
+                        callback.receiveFileChunk(targetType, target, chunk);
+                    } catch (LocalException ignored) {
+                        // Continue forwarding to other members.
+                    }
+                }
+            }
+            return;
+        }
+        throw new IllegalArgumentException("Tipo de destino de archivo desconocido.");
     }
 
     @Override
