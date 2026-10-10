@@ -120,14 +120,13 @@ public class ChatServiceImpl implements ChatService {
         Set<String> members = roomManager.membersOf(roomName);
         for (String member : members) {
             if (member.equals(sender)) {
-                continue; // Do not echo a room message to its sender.
+                continue;
             }
             ClientCallbackPrx callback = userManager.connectedUsers().get(member);
             if (callback != null) {
                 try {
                     callback.receiveRoomMessage(roomName, sender, message);
                 } catch (LocalException ignored) {
-                    // A failed callback must not prevent delivery to other room members.
                 }
             }
         }
@@ -179,7 +178,6 @@ public class ChatServiceImpl implements ChatService {
                     try {
                         callback.receiveFileChunk(targetType, target, chunk);
                     } catch (LocalException ignored) {
-                        // Continue forwarding to other members.
                     }
                 }
             }
