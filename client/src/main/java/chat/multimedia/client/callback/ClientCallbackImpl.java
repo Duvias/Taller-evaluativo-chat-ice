@@ -5,20 +5,19 @@ import com.zeroc.Ice.Current;
 import distributed.chat.ClientCallback;
 import distributed.chat.FileChunk;
 import distributed.chat.TargetType;
+import chat.multimedia.client.file.FileClient;
 
-/**
- * Callback base del cliente.
- */
+
 public class ClientCallbackImpl implements ClientCallback {
 
-    private final VoiceClient voiceClient;
+    private final FileClient fileClient;
 
     public ClientCallbackImpl() {
-        this(null);
+        this(new FileClient());
     }
 
-    public ClientCallbackImpl(VoiceClient voiceClient) {
-        this.voiceClient = voiceClient;
+    public ClientCallbackImpl(FileClient fileClient) {
+        this.fileClient = fileClient;
     }
 
     @Override
@@ -57,6 +56,7 @@ public class ClientCallbackImpl implements ClientCallback {
             FileChunk chunk,
             Current current
     ) {
+        fileClient.receiveChunk(targetType, target, chunk);
     }
 
     @Override
