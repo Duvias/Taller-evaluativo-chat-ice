@@ -17,7 +17,6 @@ public final class Server {
     public static void main(String[] args) {
         Thread mainThread = Thread.currentThread();
 
-        // Ice 3.8 for Java exposes public Communicator constructors.
         try (Communicator communicator = new Communicator(args)) {
             ObjectAdapter adapter = createAdapter(communicator);
             adapter.activate();

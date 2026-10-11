@@ -1,9 +1,11 @@
 
 package chat.multimedia.server.service;
 
+import chat.multimedia.common.NetworkConfig;
 import chat.multimedia.server.file.FileManager;
 import chat.multimedia.server.room.RoomManager;
 import chat.multimedia.server.user.UserManager;
+import chat.multimedia.server.voice.GroupCallSession;
 import chat.multimedia.server.voice.VoiceManager;
 import com.zeroc.Ice.Current;
 import distributed.chat.CallError;
@@ -19,18 +21,35 @@ import distributed.chat.UserNotFound;
 import com.zeroc.Ice.LocalException;
 import java.util.Set;
 
+import java.util.Set;
+
 public class ChatServiceImpl implements ChatService {
 
     private final UserManager userManager;
     private final RoomManager roomManager;
+    @SuppressWarnings("unused")
     private final FileManager fileManager;
     private final VoiceManager voiceManager;
 
     public ChatServiceImpl() {
-        this.userManager = new UserManager();
-        this.roomManager = new RoomManager();
-        this.fileManager = new FileManager();
-        this.voiceManager = new VoiceManager();
+        this(
+                new UserManager(),
+                new RoomManager(),
+                new FileManager(),
+                new VoiceManager()
+        );
+    }
+
+    ChatServiceImpl(
+            UserManager userManager,
+            RoomManager roomManager,
+            FileManager fileManager,
+            VoiceManager voiceManager
+    ) {
+        this.userManager = userManager;
+        this.roomManager = roomManager;
+        this.fileManager = fileManager;
+        this.voiceManager = voiceManager;
     }
 
     // =========================
@@ -214,7 +233,6 @@ public class ChatServiceImpl implements ChatService {
             FileChunk chunk,
             Current current
     ) throws UserNotFound, RoomNotFound, NotInRoom {
-        // TODO Integrante 2
     }
 
     // =========================
@@ -229,7 +247,23 @@ public class ChatServiceImpl implements ChatService {
             int port,
             Current current
     ) throws UserNotFound, CallError {
-        // TODO Integrante 3
+        requireConnectedUser(caller);
+        ClientCallbackPrx targetCallback = requireConnectedUser(target);
+
+        try {
+            voiceManager.startCall(caller, target, ip, port);
+        } catch (IllegalStateException exception) {
+            throw new CallError(exception.getMessage());
+        }
+
+        try {
+            targetCallback.incomingCall(caller, ip, port);
+        } catch (RuntimeException exception) {
+            rollbackPendingCall(caller, target);
+            throw new CallError(
+                    "Could not notify " + target + " about the incoming call."
+            );
+        }
     }
 
     @Override
@@ -240,7 +274,23 @@ public class ChatServiceImpl implements ChatService {
             int port,
             Current current
     ) throws UserNotFound, CallError {
-        // TODO Integrante 3
+        ClientCallbackPrx callerCallback = requireConnectedUser(caller);
+        requireConnectedUser(target);
+
+        try {
+            voiceManager.acceptCall(caller, target, ip, port);
+        } catch (IllegalStateException exception) {
+            throw new CallError(exception.getMessage());
+        }
+
+        try {
+            callerCallback.callAccepted(target, ip, port);
+        } catch (RuntimeException exception) {
+            rollbackActiveCall(target, caller);
+            throw new CallError(
+                    "Could not notify " + caller + " that the call was accepted."
+            );
+        }
     }
 
     @Override
@@ -249,7 +299,22 @@ public class ChatServiceImpl implements ChatService {
             String target,
             Current current
     ) throws UserNotFound, CallError {
-        // TODO Integrante 3
+        ClientCallbackPrx callerCallback = requireConnectedUser(caller);
+        requireConnectedUser(target);
+
+        try {
+            voiceManager.rejectCall(caller, target);
+        } catch (IllegalStateException exception) {
+            throw new CallError(exception.getMessage());
+        }
+
+        try {
+            callerCallback.callRejected(target);
+        } catch (RuntimeException exception) {
+            throw new CallError(
+                    "The call was rejected, but " + caller + " could not be notified."
+            );
+        }
     }
 
     @Override
@@ -258,7 +323,49 @@ public class ChatServiceImpl implements ChatService {
             String target,
             Current current
     ) throws UserNotFound, CallError {
-        // TODO Integrante 3
+        requireConnectedUser(user);
+        ClientCallbackPrx targetCallback = requireConnectedUser(target);
+
+        try {
+            voiceManager.endCall(user, target);
+        } catch (IllegalStateException exception) {
+            throw new CallError(exception.getMessage());
+        }
+
+        try {
+            targetCallback.callEnded(user);
+        } catch (RuntimeException exception) {
+            throw new CallError(
+                    "The call ended, but " + target + " could not be notified."
+            );
+        }
+    }
+
+    private ClientCallbackPrx requireConnectedUser(
+            String nickname
+    ) throws UserNotFound {
+        ClientCallbackPrx callback =
+                userManager.connectedUsers().get(nickname);
+
+        if (callback == null) {
+            throw new UserNotFound(nickname);
+        }
+
+        return callback;
+    }
+
+    private void rollbackPendingCall(String caller, String target) {
+        try {
+            voiceManager.rejectCall(caller, target);
+        } catch (IllegalStateException ignored) {
+        }
+    }
+
+    private void rollbackActiveCall(String user, String target) {
+        try {
+            voiceManager.endCall(user, target);
+        } catch (IllegalStateException ignored) {
+        }
     }
 
     @Override
@@ -267,7 +374,34 @@ public class ChatServiceImpl implements ChatService {
             String roomName,
             Current current
     ) throws RoomNotFound, NotInRoom, CallError {
-        // TODO Integrante 3
+        Set<String> roomMembers = requireRoom(roomName);
+        requireRoomMember(host, roomName, roomMembers);
+        requireConnectedGroupUser(host);
+
+        try {
+            voiceManager.startGroupCall(host, roomName);
+        } catch (IllegalStateException exception) {
+            throw new CallError(exception.getMessage());
+        }
+
+        for (String nickname : roomMembers) {
+            ClientCallbackPrx callback =
+                    userManager.connectedUsers().get(nickname);
+
+            if (callback == null) {
+                continue;
+            }
+
+            try {
+                callback.groupCallStarted(
+                        roomName,
+                        host,
+                        NetworkConfig.ICE_HOST,
+                        voiceManager.getRelayPort()
+                );
+            } catch (RuntimeException ignored) {
+            }
+        }
     }
 
     @Override
@@ -278,7 +412,67 @@ public class ChatServiceImpl implements ChatService {
             int port,
             Current current
     ) throws RoomNotFound, NotInRoom, CallError {
-        // TODO Integrante 3
+        Set<String> roomMembers = requireRoom(roomName);
+        requireRoomMember(nickname, roomName, roomMembers);
+        ClientCallbackPrx joiningCallback =
+                requireConnectedGroupUser(nickname);
+
+        try {
+            voiceManager.joinGroupCall(
+                    nickname,
+                    roomName,
+                    ip,
+                    port
+            );
+        } catch (IllegalStateException exception) {
+            throw new CallError(exception.getMessage());
+        }
+
+        GroupCallSession groupCall =
+                voiceManager.getGroupCall(roomName);
+
+        if (groupCall == null) {
+            throw new CallError(
+                    "There is no active group call in "
+                            + roomName
+                            + "."
+            );
+        }
+
+        try {
+            joiningCallback.groupCallStarted(
+                    roomName,
+                    groupCall.getHost(),
+                    NetworkConfig.ICE_HOST,
+                    voiceManager.getRelayPort()
+            );
+        } catch (RuntimeException exception) {
+            throw new CallError(
+                    "Could not deliver the group relay endpoint."
+            );
+        }
+
+        for (String participant :
+                voiceManager.getGroupParticipants(roomName)) {
+            if (participant.equals(nickname)) {
+                continue;
+            }
+
+            ClientCallbackPrx callback =
+                    userManager.connectedUsers().get(participant);
+
+            if (callback == null) {
+                continue;
+            }
+
+            try {
+                callback.groupCallParticipantJoined(
+                        roomName,
+                        nickname
+                );
+            } catch (RuntimeException ignored) {
+            }
+        }
     }
 
     @Override
@@ -287,7 +481,34 @@ public class ChatServiceImpl implements ChatService {
             String roomName,
             Current current
     ) throws RoomNotFound, CallError {
-        // TODO Integrante 3
+        requireRoom(roomName);
+
+        try {
+            voiceManager.leaveGroupCall(
+                    nickname,
+                    roomName
+            );
+        } catch (IllegalStateException exception) {
+            throw new CallError(exception.getMessage());
+        }
+
+        for (String participant :
+                voiceManager.getGroupParticipants(roomName)) {
+            ClientCallbackPrx callback =
+                    userManager.connectedUsers().get(participant);
+
+            if (callback == null) {
+                continue;
+            }
+
+            try {
+                callback.groupCallParticipantLeft(
+                        roomName,
+                        nickname
+                );
+            } catch (RuntimeException ignored) {
+            }
+        }
     }
 
     @Override
@@ -296,6 +517,72 @@ public class ChatServiceImpl implements ChatService {
             String roomName,
             Current current
     ) throws RoomNotFound, CallError {
-        // TODO Integrante 3
+        requireRoom(roomName);
+
+        Set<String> participants =
+                voiceManager.getGroupParticipants(roomName);
+
+        try {
+            voiceManager.endGroupCall(
+                    host,
+                    roomName
+            );
+        } catch (IllegalStateException exception) {
+            throw new CallError(exception.getMessage());
+        }
+
+        for (String participant : participants) {
+            ClientCallbackPrx callback =
+                    userManager.connectedUsers().get(participant);
+
+            if (callback == null) {
+                continue;
+            }
+
+            try {
+                callback.groupCallEnded(roomName);
+            } catch (RuntimeException ignored) {
+            }
+        }
+    }
+
+    private ClientCallbackPrx requireConnectedGroupUser(
+            String nickname
+    ) throws CallError {
+        ClientCallbackPrx callback =
+                userManager.connectedUsers().get(nickname);
+
+        if (callback == null) {
+            throw new CallError(
+                    nickname + " is not connected."
+            );
+        }
+
+        return callback;
+    }
+
+    private Set<String> requireRoom(
+            String roomName
+    ) throws RoomNotFound {
+        Set<String> members = roomManager.rooms().get(roomName);
+
+        if (members == null) {
+            throw new RoomNotFound(roomName);
+        }
+
+        return members;
+    }
+
+    private void requireRoomMember(
+            String nickname,
+            String roomName,
+            Set<String> members
+    ) throws NotInRoom {
+        if (!members.contains(nickname)) {
+            throw new NotInRoom(
+                    nickname,
+                    roomName
+            );
+        }
     }
 }

@@ -1,7 +1,6 @@
 package chat.multimedia.client.cli;
 
-import chat.multimedia.client.callback.ClientCallbackImpl;
-import chat.multimedia.client.file.FileClient;
+import chat.multimedia.client.voice.VoiceClient;
 import com.zeroc.Ice.Communicator;
 import com.zeroc.Ice.Identity;
 import com.zeroc.Ice.ObjectAdapter;
@@ -11,27 +10,41 @@ import distributed.chat.ChatServicePrx;
 import distributed.chat.ClientCallbackPrx;
 import distributed.chat.TargetType;
 
-import java.nio.file.Path;
-import java.util.Arrays;
+import java.util.Objects;
 import java.util.Scanner;
 
-public final class Cli {
+public class Cli {
 
-    private final Communicator communicator;
-    private final ChatServicePrx chatService;
-    private final FileClient fileClient;
-    private final ObjectAdapter callbackAdapter;
-    private final Identity callbackIdentity = Util.stringToIdentity("chatClientCallback");
-    private String nickname;
+    private final VoiceClient voiceClient;
 
-    public Cli(Communicator communicator, ChatServicePrx chatService) {
-        this.communicator = communicator;
-        this.chatService = chatService;
-        this.fileClient = new FileClient();
-        String callbackHost = System.getProperty("chat.callback.host", "127.0.0.1");
-        this.callbackAdapter = communicator.createObjectAdapterWithEndpoints("ChatClientCallbackAdapter", "tcp -h " + callbackHost + " -p 0");
-        callbackAdapter.add(new ClientCallbackImpl(fileClient), callbackIdentity);
-        callbackAdapter.activate();
+    public Cli(
+            Communicator communicator,
+            ChatServicePrx chatService
+    ) {
+        this(
+                communicator,
+                chatService,
+                new VoiceClient(chatService)
+        );
+    }
+
+    public Cli(
+            Communicator communicator,
+            ChatServicePrx chatService,
+            VoiceClient voiceClient
+    ) {
+        Objects.requireNonNull(
+                communicator,
+                "communicator"
+        );
+        Objects.requireNonNull(
+                chatService,
+                "chatService"
+        );
+        this.voiceClient = Objects.requireNonNull(
+                voiceClient,
+                "voiceClient"
+        );
     }
 
     public void run() {
@@ -201,6 +214,89 @@ public final class Cli {
     private static String usefulMessage(Exception exception) {
         String message = exception.getMessage();
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
+    }
+
+    public void setLoggedInNickname(String nickname) {
+        voiceClient.setLocalNickname(nickname);
+    }
+
+    private boolean handleCommand(String line) throws Exception {
+        if (line.isBlank()) {
+            return true;
+        }
+
+        if (line.startsWith("/call ")) {
+            voiceClient.startCall(argument(line, "/call"));
+            return true;
+        }
+
+        if (line.startsWith("/gcall ")) {
+            voiceClient.startGroupCall(argument(line, "/gcall"));
+            return true;
+        }
+
+        if (line.startsWith("/gjoin ")) {
+            voiceClient.joinGroupCall(argument(line, "/gjoin"));
+            return true;
+        }
+
+        return switch (line) {
+            case "/help" -> {
+                printHelp();
+                yield true;
+            }
+            case "/accept" -> {
+                voiceClient.acceptIncomingCall();
+                yield true;
+            }
+            case "/reject" -> {
+                voiceClient.rejectIncomingCall();
+                yield true;
+            }
+            case "/hangup" -> {
+                voiceClient.endCall();
+                yield true;
+            }
+            case "/mute" -> {
+                boolean muted = voiceClient.toggleMute();
+                System.out.println(
+                        muted
+                                ? "[VOZ] Micrófono silenciado."
+                                : "[VOZ] Micrófono activado."
+                );
+                yield true;
+            }
+            case "/gleave" -> {
+                voiceClient.leaveGroupCall();
+                yield true;
+            }
+            case "/gend" -> {
+                voiceClient.endGroupCall();
+                yield true;
+            }
+            case "/exit" -> false;
+            default -> {
+                System.out.println(
+                        "Comando todavía no implementado: " + line
+                );
+                yield true;
+            }
+        };
+    }
+
+    private static String argument(
+            String line,
+            String command
+    ) {
+        String value = line.substring(command.length()).trim();
+
+        if (value.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Falta el argumento para " + command + "."
+            );
+        }
+
+        return value;
     }
 
     private void printHelp() {

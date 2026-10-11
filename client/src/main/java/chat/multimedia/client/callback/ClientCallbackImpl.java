@@ -1,5 +1,6 @@
 package chat.multimedia.client.callback;
 
+import chat.multimedia.client.voice.VoiceClient;
 import com.zeroc.Ice.Current;
 import distributed.chat.ClientCallback;
 import distributed.chat.FileChunk;
@@ -65,7 +66,16 @@ public class ClientCallbackImpl implements ClientCallback {
             int port,
             Current current
     ) {
-        System.out.printf("[LLAMADA] %s te está llamando.%n", caller);
+        if (voiceClient != null) {
+            voiceClient.onIncomingCall(caller, ip, port);
+        }
+
+        System.out.printf(
+                "[LLAMADA] %s te está llamando desde %s:%d.%n",
+                caller,
+                ip,
+                port
+        );
     }
 
     @Override
@@ -75,6 +85,10 @@ public class ClientCallbackImpl implements ClientCallback {
             int port,
             Current current
     ) {
+        if (voiceClient != null) {
+            voiceClient.onCallAccepted(user, ip, port);
+        }
+
         System.out.printf(
                 "[LLAMADA] %s aceptó. UDP remoto: %s:%d%n",
                 user,
@@ -85,11 +99,19 @@ public class ClientCallbackImpl implements ClientCallback {
 
     @Override
     public void callRejected(String user, Current current) {
+        if (voiceClient != null) {
+            voiceClient.onCallRejected(user);
+        }
+
         System.out.println("[LLAMADA] " + user + " rechazó la llamada.");
     }
 
     @Override
     public void callEnded(String user, Current current) {
+        if (voiceClient != null) {
+            voiceClient.onCallEnded(user);
+        }
+
         System.out.println("[LLAMADA] Llamada finalizada con " + user + ".");
     }
 
@@ -101,6 +123,15 @@ public class ClientCallbackImpl implements ClientCallback {
             int relayPort,
             Current current
     ) {
+        if (voiceClient != null) {
+            voiceClient.onGroupCallStarted(
+                    roomName,
+                    host,
+                    relayIp,
+                    relayPort
+            );
+        }
+
         System.out.printf(
                 "[VOZ GRUPAL] %s inició llamada en %s. Relay %s:%d%n",
                 host,
@@ -112,6 +143,10 @@ public class ClientCallbackImpl implements ClientCallback {
 
     @Override
     public void groupCallEnded(String roomName, Current current) {
+        if (voiceClient != null) {
+            voiceClient.onGroupCallEnded(roomName);
+        }
+
         System.out.println("[VOZ GRUPAL] Finalizó llamada en " + roomName + ".");
     }
 
