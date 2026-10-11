@@ -1,0 +1,21 @@
+allprojects {
+    group = "chat.multimedia"
+    version = "1.0-SNAPSHOT"
+
+    repositories {
+        mavenCentral()
+    }
+}
+
+subprojects {
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = "UTF-8"
+        // Ice 3.8 requires Java 17. Compile bytecode compatible with Java 17,
+        // while allowing the build itself to run on any JDK 17+.
+        options.release = 17
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+    }
+}

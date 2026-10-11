@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<generated>
+  <source name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\src\main\slice\Chat.ice">
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/TargetType.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/UserAlreadyExists.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/UserNotFound.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/RoomAlreadyExists.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/RoomNotFound.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/NotInRoom.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/CallError.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/FileChunk.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/ClientCallbackPrx.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/_ClientCallbackPrxI.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/ChatServicePrx.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/_ChatServicePrxI.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/ClientCallback.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/ChatService.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/AsyncClientCallback.java"/>
+    <file name="C:\Users\camit\OneDrive\Documents\Uni\compunet\Taller-evaluativo-chat-ice\common\build\generated\source\slice\main/distributed/chat/AsyncChatService.java"/>
+  </source>
+</generated>

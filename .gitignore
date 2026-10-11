@@ -1,0 +1,34 @@
+# Gradle
+.gradle/
+**/build/
+
+# Java / IDE
+*.class
+*.jar
+# The Gradle Wrapper JAR is source-controlled by design.
+!gradle/wrapper/gradle-wrapper.jar
+*.war
+*.ear
+*.iml
+.idea/
+.vscode/
+.settings/
+.classpath
+.project
+out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and runtime artifacts
+*.log
+logs/
+downloads/
+received_files/
+recordings/
+
+# Temporary files
+*.tmp
+*.swp
+*~
