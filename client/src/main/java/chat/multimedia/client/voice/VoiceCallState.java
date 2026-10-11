@@ -4,5 +4,6 @@ public enum VoiceCallState {
     IDLE,
     OUTGOING_RINGING,
     INCOMING_RINGING,
-    ACTIVE
+    ACTIVE,
+    GROUP_ACTIVE
 }

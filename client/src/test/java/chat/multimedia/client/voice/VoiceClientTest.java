@@ -1,6 +1,8 @@
 package chat.multimedia.client.voice;
 
 import distributed.chat.CallError;
+import distributed.chat.NotInRoom;
+import distributed.chat.RoomNotFound;
 import distributed.chat.UserNotFound;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -131,16 +133,31 @@ class VoiceClientTest {
 
     @Test
     void requiresNicknameBeforeStartingCall() {
-        VoiceClient clientWithoutNickname = new VoiceClient(gateway);
+        try (
+                VoiceClient clientWithoutNickname =
+                        new VoiceClient(gateway)
+        ) {
+            assertThrows(
+                    IllegalStateException.class,
+                    () -> clientWithoutNickname.startCall(
+                            "bob",
+                            "10.0.0.10",
+                            5000
+                    )
+            );
+        }
+    }
 
-        assertThrows(
-                IllegalStateException.class,
-                () -> clientWithoutNickname.startCall(
-                        "bob",
-                        "10.0.0.10",
-                        5000
-                )
-        );
+
+    @Test
+    void togglesMuteDuringActiveCall() throws Exception {
+        voiceClient.startCall("bob", "10.0.0.10", 5000);
+        voiceClient.onCallAccepted("bob", "10.0.0.20", 5001);
+
+        assertTrue(voiceClient.toggleMute());
+        assertTrue(voiceClient.isMuted());
+        assertFalse(voiceClient.toggleMute());
+        assertFalse(voiceClient.isMuted());
     }
 
     private static final class RecordingGateway
@@ -204,6 +221,36 @@ class VoiceClientTest {
         ) throws UserNotFound, CallError {
             endUser = user;
             endTarget = target;
+        }
+
+        @Override
+        public void startGroupCall(
+                String host,
+                String roomName
+        ) throws RoomNotFound, NotInRoom, CallError {
+        }
+
+        @Override
+        public void joinGroupCall(
+                String nickname,
+                String roomName,
+                String ip,
+                int port
+        ) throws RoomNotFound, NotInRoom, CallError {
+        }
+
+        @Override
+        public void leaveGroupCall(
+                String nickname,
+                String roomName
+        ) throws RoomNotFound, CallError {
+        }
+
+        @Override
+        public void endGroupCall(
+                String host,
+                String roomName
+        ) throws RoomNotFound, CallError {
         }
     }
 }

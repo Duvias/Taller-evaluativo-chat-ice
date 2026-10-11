@@ -8,6 +8,9 @@ public final class NetworkConfig {
     public static final int ICE_PORT =
             Integer.getInteger("chat.ice.port", 10000);
 
+    public static final String UDP_RELAY_HOST =
+            System.getProperty("chat.udp.relayHost", ICE_HOST);
+
     public static final int UDP_RELAY_PORT =
             Integer.getInteger("chat.udp.relayPort", 12000);
 

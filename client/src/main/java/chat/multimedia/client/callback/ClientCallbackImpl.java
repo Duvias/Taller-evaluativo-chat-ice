@@ -57,7 +57,6 @@ public class ClientCallbackImpl implements ClientCallback {
             FileChunk chunk,
             Current current
     ) {
-        // TODO Integrante 2
     }
 
     @Override
@@ -124,6 +123,15 @@ public class ClientCallbackImpl implements ClientCallback {
             int relayPort,
             Current current
     ) {
+        if (voiceClient != null) {
+            voiceClient.onGroupCallStarted(
+                    roomName,
+                    host,
+                    relayIp,
+                    relayPort
+            );
+        }
+
         System.out.printf(
                 "[VOZ GRUPAL] %s inició llamada en %s. Relay %s:%d%n",
                 host,
@@ -135,6 +143,10 @@ public class ClientCallbackImpl implements ClientCallback {
 
     @Override
     public void groupCallEnded(String roomName, Current current) {
+        if (voiceClient != null) {
+            voiceClient.onGroupCallEnded(roomName);
+        }
+
         System.out.println("[VOZ GRUPAL] Finalizó llamada en " + roomName + ".");
     }
 
