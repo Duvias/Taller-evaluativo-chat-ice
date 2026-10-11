@@ -246,6 +246,37 @@ public class VoiceManager implements AutoCloseable {
         return groupRoomByUser.containsKey(nickname);
     }
 
+    public synchronized void disconnect(String nickname) {
+        CallSession call = callsByUser.get(nickname);
+        if (call != null) {
+            removeSession(call);
+        }
+
+        String roomName = groupRoomByUser.get(nickname);
+        if (roomName == null) {
+            return;
+        }
+
+        GroupCallSession session = groupCalls.get(roomName);
+        if (session == null) {
+            groupRoomByUser.remove(nickname);
+            return;
+        }
+
+        if (session.getHost().equals(nickname)) {
+            for (String participant : session.participants()) {
+                groupRoomByUser.remove(participant, roomName);
+            }
+            groupCalls.remove(roomName);
+            relayServer.removeRoom(roomName);
+            return;
+        }
+
+        session.removeParticipant(nickname);
+        groupRoomByUser.remove(nickname, roomName);
+        relayServer.unregister(roomName, nickname);
+    }
+
     @Override
     public synchronized void close() {
         callsByUser.clear();

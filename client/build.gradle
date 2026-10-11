@@ -13,3 +13,7 @@ dependencies {
 application {
     mainClass = "chat.multimedia.client.Client"
 }
+
+tasks.named("run") {
+    standardInput = System.in
+}

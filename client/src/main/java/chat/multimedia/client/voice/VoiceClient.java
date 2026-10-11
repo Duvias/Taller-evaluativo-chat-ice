@@ -1,5 +1,6 @@
 package chat.multimedia.client.voice;
 
+import chat.multimedia.common.NetworkConfig;
 import distributed.chat.CallError;
 import distributed.chat.ChatServicePrx;
 import distributed.chat.NotInRoom;
@@ -9,315 +10,215 @@ import distributed.chat.UserNotFound;
 import javax.sound.sampled.LineUnavailableException;
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.util.Objects;
 
-public class VoiceClient implements AutoCloseable {
+public final class VoiceClient implements AutoCloseable {
 
-    private final VoiceSignalingGateway signalingGateway;
-
-    private String localNickname;
-    private String peerNickname;
-    private String remoteIp;
-    private int remotePort = -1;
-    private String groupRoom;
-    private String relayIp;
-    private int relayPort = -1;
-    private VoiceCallState state = VoiceCallState.IDLE;
-    private volatile boolean muted;
-
-    private UdpVoiceTransport transport;
-    private MicrophoneCapture microphone;
-    private AudioPlayback playback;
-
-    public VoiceClient(ChatServicePrx chatService) {
-        this(new IceVoiceSignalingGateway(
-                Objects.requireNonNull(chatService, "chatService")
-        ));
+    private enum State {
+        IDLE,
+        OUTGOING,
+        INCOMING,
+        ACTIVE,
+        GROUP
     }
 
-    VoiceClient(VoiceSignalingGateway signalingGateway) {
-        this.signalingGateway = Objects.requireNonNull(
-                signalingGateway,
-                "signalingGateway"
-        );
+    private final ChatServicePrx chatService;
+
+    private String nickname;
+    private String peer;
+    private String peerIp;
+    private int peerPort = -1;
+    private String groupRoom;
+    private String announcedGroupRoom;
+    private String relayIp;
+    private int relayPort = -1;
+    private boolean groupHost;
+    private boolean muted;
+    private State state = State.IDLE;
+    private VoiceMedia media;
+
+    public VoiceClient(ChatServicePrx chatService) {
+        this.chatService = Objects.requireNonNull(chatService, "chatService");
     }
 
     public synchronized void setLocalNickname(String nickname) {
-        requireIdle("Cannot change nickname while a call is in progress.");
-        localNickname = requireText(nickname, "nickname");
+        if (state != State.IDLE) {
+            throw new IllegalStateException("No puedes cambiar de usuario durante una llamada.");
+        }
+        this.nickname = requireText(nickname, "nickname");
     }
 
     public synchronized void startCall(String target)
             throws UserNotFound, CallError {
-        prepareTransport();
+        requireIdle();
+        String localNickname = requireNickname();
+        String remoteUser = requireText(target, "usuario");
+        VoiceMedia newMedia = createMedia();
 
         try {
-            startCall(
-                    target,
-                    resolveLocalIp(),
-                    transport.getLocalPort()
+            chatService.startCall(
+                    localNickname,
+                    remoteUser,
+                    localIp(),
+                    newMedia.getLocalPort()
             );
-        } catch (RuntimeException | UserNotFound | CallError exception) {
-            cleanupMedia();
+            media = newMedia;
+            peer = remoteUser;
+            state = State.OUTGOING;
+        } catch (UserNotFound | CallError | RuntimeException exception) {
+            newMedia.close();
             throw exception;
         }
-    }
-
-    public synchronized void startCall(
-            String target,
-            String localIp,
-            int localPort
-    ) throws UserNotFound, CallError {
-        requireIdle("A call is already in progress.");
-        String caller = requireLocalNickname();
-        String validatedTarget = requireText(target, "target");
-        validateEndpoint(localIp, localPort);
-
-        signalingGateway.startCall(
-                caller,
-                validatedTarget,
-                localIp,
-                localPort
-        );
-
-        peerNickname = validatedTarget;
-        remoteIp = null;
-        remotePort = -1;
-        state = VoiceCallState.OUTGOING_RINGING;
     }
 
     public synchronized void acceptIncomingCall()
             throws UserNotFound, CallError {
-        prepareTransport();
+        requireState(State.INCOMING, "No hay una llamada entrante pendiente.");
+        VoiceMedia newMedia = createMedia();
 
         try {
-            acceptIncomingCall(
-                    resolveLocalIp(),
-                    transport.getLocalPort()
+            chatService.acceptCall(
+                    peer,
+                    requireNickname(),
+                    localIp(),
+                    newMedia.getLocalPort()
             );
-        } catch (RuntimeException | UserNotFound | CallError exception) {
-            cleanupMedia();
+            newMedia.start(peerIp, peerPort);
+            media = newMedia;
+            state = State.ACTIVE;
+        } catch (UserNotFound | CallError | RuntimeException exception) {
+            newMedia.close();
             throw exception;
-        }
-    }
-
-    public synchronized void acceptIncomingCall(
-            String localIp,
-            int localPort
-    ) throws UserNotFound, CallError {
-        requireState(
-                VoiceCallState.INCOMING_RINGING,
-                "There is no incoming call to accept."
-        );
-        validateEndpoint(localIp, localPort);
-
-        signalingGateway.acceptCall(
-                peerNickname,
-                requireLocalNickname(),
-                localIp,
-                localPort
-        );
-
-        state = VoiceCallState.ACTIVE;
-
-        if (transport != null) {
-            startMedia();
+        } catch (IOException | LineUnavailableException exception) {
+            newMedia.close();
+            throw new IllegalStateException(
+                    "No se pudo iniciar el audio de la llamada.",
+                    exception
+            );
         }
     }
 
     public synchronized void rejectIncomingCall()
             throws UserNotFound, CallError {
-        requireState(
-                VoiceCallState.INCOMING_RINGING,
-                "There is no incoming call to reject."
-        );
-
-        signalingGateway.rejectCall(
-                peerNickname,
-                requireLocalNickname()
-        );
-
-        cleanupAndReset();
+        requireState(State.INCOMING, "No hay una llamada entrante pendiente.");
+        chatService.rejectCall(peer, requireNickname());
+        resetCall();
     }
 
-    public synchronized void endCall()
-            throws UserNotFound, CallError {
-        if (state == VoiceCallState.IDLE) {
-            throw new IllegalStateException(
-                    "There is no call to end."
-            );
+    public synchronized void hangup()
+            throws UserNotFound, CallError, RoomNotFound {
+        if (state == State.IDLE) {
+            throw new IllegalStateException("No hay una llamada activa.");
         }
 
-        if (state == VoiceCallState.GROUP_ACTIVE) {
-            try {
-                signalingGateway.leaveGroupCall(
-                        requireLocalNickname(),
-                        groupRoom
-                );
-            } catch (RoomNotFound exception) {
-                throw new CallError(
-                        "The group call room no longer exists."
-                );
+        if (state == State.GROUP) {
+            if (groupHost) {
+                chatService.endGroupCall(requireNickname(), groupRoom);
+            } else {
+                chatService.leaveGroupCall(requireNickname(), groupRoom);
             }
-
-            cleanupAndReset();
+            resetCall();
             return;
         }
 
-        signalingGateway.endCall(
-                requireLocalNickname(),
-                peerNickname
-        );
-
-        cleanupAndReset();
+        chatService.endCall(requireNickname(), peer);
+        resetCall();
     }
 
     public synchronized boolean toggleMute() {
-        if (state != VoiceCallState.ACTIVE
-                && state != VoiceCallState.GROUP_ACTIVE) {
-            throw new IllegalStateException(
-                    "Mute is available only during an active voice call."
-            );
+        if (state != State.ACTIVE && state != State.GROUP) {
+            throw new IllegalStateException("El mute solo funciona durante una llamada activa.");
         }
 
         muted = !muted;
+        if (media != null) {
+            media.setMuted(muted);
+        }
         return muted;
     }
 
-    public void startGroupCall(String roomName)
+    public synchronized void startGroupCall(String roomName)
             throws RoomNotFound, NotInRoom, CallError {
-        String nickname;
-        String validatedRoom;
-        String localIp;
-        int localPort;
-
-        synchronized (this) {
-            requireIdle("A call is already in progress.");
-            nickname = requireLocalNickname();
-            validatedRoom = requireText(roomName, "roomName");
-            prepareTransport();
-            localIp = resolveLocalIp();
-            localPort = transport.getLocalPort();
-        }
+        requireIdle();
+        String room = requireText(roomName, "sala");
+        VoiceMedia newMedia = createMedia();
 
         try {
-            signalingGateway.startGroupCall(
-                    nickname,
-                    validatedRoom
+            chatService.startGroupCall(requireNickname(), room);
+            chatService.joinGroupCall(
+                    requireNickname(),
+                    room,
+                    localIp(),
+                    newMedia.getLocalPort()
             );
-
-            signalingGateway.joinGroupCall(
-                    nickname,
-                    validatedRoom,
-                    localIp,
-                    localPort
-            );
-
-            synchronized (this) {
-                requireRelayEndpoint(validatedRoom);
-                groupRoom = validatedRoom;
-                state = VoiceCallState.GROUP_ACTIVE;
-                startMedia();
-            }
-        } catch (RuntimeException
-                 | RoomNotFound
-                 | NotInRoom
-                 | CallError exception) {
-            synchronized (this) {
-                cleanupAndReset();
-            }
+            String targetIp = relayFor(room);
+            int targetPort = relayPortFor(room);
+            newMedia.start(targetIp, targetPort);
+            media = newMedia;
+            groupRoom = room;
+            groupHost = true;
+            state = State.GROUP;
+        } catch (RoomNotFound | NotInRoom | CallError | RuntimeException exception) {
+            newMedia.close();
             throw exception;
+        } catch (IOException | LineUnavailableException exception) {
+            newMedia.close();
+            throw new IllegalStateException(
+                    "No se pudo iniciar el audio grupal.",
+                    exception
+            );
         }
     }
 
-    public void joinGroupCall(String roomName)
+    public synchronized void joinGroupCall(String roomName)
             throws RoomNotFound, NotInRoom, CallError {
-        String nickname;
-        String validatedRoom;
-        String localIp;
-        int localPort;
-
-        synchronized (this) {
-            requireIdle("A call is already in progress.");
-            nickname = requireLocalNickname();
-            validatedRoom = requireText(roomName, "roomName");
-            prepareTransport();
-            localIp = resolveLocalIp();
-            localPort = transport.getLocalPort();
-        }
+        requireIdle();
+        String room = requireText(roomName, "sala");
+        VoiceMedia newMedia = createMedia();
 
         try {
-            signalingGateway.joinGroupCall(
-                    nickname,
-                    validatedRoom,
-                    localIp,
-                    localPort
+            chatService.joinGroupCall(
+                    requireNickname(),
+                    room,
+                    localIp(),
+                    newMedia.getLocalPort()
             );
-
-            synchronized (this) {
-                requireRelayEndpoint(validatedRoom);
-                groupRoom = validatedRoom;
-                state = VoiceCallState.GROUP_ACTIVE;
-                startMedia();
-            }
-        } catch (RuntimeException
-                 | RoomNotFound
-                 | NotInRoom
-                 | CallError exception) {
-            synchronized (this) {
-                cleanupAndReset();
-            }
+            String targetIp = relayFor(room);
+            int targetPort = relayPortFor(room);
+            newMedia.start(targetIp, targetPort);
+            media = newMedia;
+            groupRoom = room;
+            groupHost = false;
+            state = State.GROUP;
+        } catch (RoomNotFound | NotInRoom | CallError | RuntimeException exception) {
+            newMedia.close();
             throw exception;
+        } catch (IOException | LineUnavailableException exception) {
+            newMedia.close();
+            throw new IllegalStateException(
+                    "No se pudo iniciar el audio grupal.",
+                    exception
+            );
         }
     }
 
-    public void leaveGroupCall()
+    public synchronized void leaveGroupCall()
             throws RoomNotFound, CallError {
-        String nickname;
-        String roomName;
-
-        synchronized (this) {
-            requireState(
-                    VoiceCallState.GROUP_ACTIVE,
-                    "There is no active group call to leave."
-            );
-            nickname = requireLocalNickname();
-            roomName = groupRoom;
-        }
-
-        signalingGateway.leaveGroupCall(
-                nickname,
-                roomName
-        );
-
-        synchronized (this) {
-            cleanupAndReset();
-        }
+        requireState(State.GROUP, "No estás en una llamada grupal.");
+        chatService.leaveGroupCall(requireNickname(), groupRoom);
+        resetCall();
     }
 
-    public void endGroupCall()
+    public synchronized void endGroupCall()
             throws RoomNotFound, CallError {
-        String nickname;
-        String roomName;
-
-        synchronized (this) {
-            requireState(
-                    VoiceCallState.GROUP_ACTIVE,
-                    "There is no active group call to end."
-            );
-            nickname = requireLocalNickname();
-            roomName = groupRoom;
+        requireState(State.GROUP, "No estás en una llamada grupal.");
+        if (!groupHost) {
+            throw new IllegalStateException("Solo el anfitrión puede finalizar la llamada grupal.");
         }
-
-        signalingGateway.endGroupCall(
-                nickname,
-                roomName
-        );
-
-        synchronized (this) {
-            cleanupAndReset();
-        }
+        chatService.endGroupCall(requireNickname(), groupRoom);
+        resetCall();
     }
 
     public synchronized void onIncomingCall(
@@ -325,13 +226,14 @@ public class VoiceClient implements AutoCloseable {
             String ip,
             int port
     ) {
-        requireIdle("Cannot receive a second call while already busy.");
-        validateEndpoint(ip, port);
+        if (state != State.IDLE) {
+            return;
+        }
 
-        peerNickname = requireText(caller, "caller");
-        remoteIp = ip;
-        remotePort = port;
-        state = VoiceCallState.INCOMING_RINGING;
+        peer = caller;
+        peerIp = ip;
+        peerPort = port;
+        state = State.INCOMING;
     }
 
     public synchronized void onCallAccepted(
@@ -339,294 +241,159 @@ public class VoiceClient implements AutoCloseable {
             String ip,
             int port
     ) {
-        requireState(
-                VoiceCallState.OUTGOING_RINGING,
-                "No outgoing call is waiting for acceptance."
-        );
-        requireExpectedPeer(user);
-        validateEndpoint(ip, port);
+        if (state != State.OUTGOING || !Objects.equals(peer, user)) {
+            return;
+        }
 
-        remoteIp = ip;
-        remotePort = port;
-        state = VoiceCallState.ACTIVE;
+        peerIp = ip;
+        peerPort = port;
 
-        if (transport != null) {
-            startMedia();
+        try {
+            media.start(ip, port);
+            state = State.ACTIVE;
+        } catch (IOException | LineUnavailableException exception) {
+            resetCall();
+            throw new IllegalStateException(
+                    "No se pudo iniciar el audio de la llamada.",
+                    exception
+            );
         }
     }
 
     public synchronized void onCallRejected(String user) {
-        requireState(
-                VoiceCallState.OUTGOING_RINGING,
-                "No outgoing call is waiting for rejection."
-        );
-        requireExpectedPeer(user);
-        cleanupAndReset();
+        if (state == State.OUTGOING && Objects.equals(peer, user)) {
+            resetCall();
+        }
     }
 
     public synchronized void onCallEnded(String user) {
-        if (state == VoiceCallState.IDLE) {
-            return;
+        if (Objects.equals(peer, user)) {
+            resetCall();
         }
-
-        requireExpectedPeer(user);
-        cleanupAndReset();
     }
 
     public synchronized void onGroupCallStarted(
             String roomName,
             String host,
-            String ip,
-            int port
+            String relayIp,
+            int relayPort
     ) {
-        requireText(host, "host");
-        validateEndpoint(ip, port);
-
-        groupRoom = requireText(roomName, "roomName");
-        relayIp = ip;
-        relayPort = port;
+        announcedGroupRoom = roomName;
+        this.relayIp = relayIp;
+        this.relayPort = relayPort;
     }
 
     public synchronized void onGroupCallEnded(String roomName) {
-        if (groupRoom == null) {
-            return;
+        if (state == State.GROUP && Objects.equals(groupRoom, roomName)) {
+            resetCall();
         }
-
-        if (groupRoom.equals(roomName)) {
-            cleanupAndReset();
+        if (Objects.equals(announcedGroupRoom, roomName)) {
+            announcedGroupRoom = null;
+            relayIp = null;
+            relayPort = -1;
         }
     }
 
-    public synchronized VoiceCallState getState() {
-        return state;
-    }
-
-    public synchronized String getLocalNickname() {
-        return localNickname;
-    }
-
-    public synchronized String getPeerNickname() {
-        return peerNickname;
-    }
-
-    public synchronized String getRemoteIp() {
-        return remoteIp;
-    }
-
-    public synchronized int getRemotePort() {
-        return remotePort;
-    }
-
-    public synchronized String getGroupRoom() {
-        return groupRoom;
-    }
-
-    public synchronized boolean isBusy() {
-        return state != VoiceCallState.IDLE;
-    }
-
-    public boolean isMuted() {
-        return muted;
+    public synchronized void logoutCleanup() {
+        try {
+            if (state == State.GROUP) {
+                if (groupHost) {
+                    chatService.endGroupCall(requireNickname(), groupRoom);
+                } else {
+                    chatService.leaveGroupCall(requireNickname(), groupRoom);
+                }
+            } else if (state != State.IDLE && peer != null) {
+                chatService.endCall(requireNickname(), peer);
+            }
+        } catch (Exception ignored) {
+        } finally {
+            resetCall();
+            nickname = null;
+        }
     }
 
     @Override
     public synchronized void close() {
-        cleanupAndReset();
+        resetCall();
+        nickname = null;
     }
 
-    private void prepareTransport() {
-        if (transport != null) {
-            return;
-        }
-
+    private VoiceMedia createMedia() {
         try {
-            transport = new UdpVoiceTransport(
-                    0,
-                    this::handleIncomingFrame
-            );
-            transport.start();
-        } catch (IOException exception) {
-            cleanupMedia();
+            return new VoiceMedia();
+        } catch (SocketException exception) {
             throw new IllegalStateException(
-                    "Could not open the UDP voice socket.",
+                    "No se pudo abrir el socket UDP de voz.",
                     exception
             );
         }
     }
 
-    private void startMedia() {
-        if (playback != null || microphone != null) {
-            return;
+    private String relayFor(String roomName) {
+        if (Objects.equals(roomName, announcedGroupRoom)
+                && relayIp != null
+                && !relayIp.isBlank()) {
+            return relayIp;
         }
-
-        try {
-            playback = new AudioPlayback();
-            playback.start();
-
-            microphone = new MicrophoneCapture(
-                    this::handleCapturedFrame
-            );
-            microphone.start();
-        } catch (LineUnavailableException exception) {
-            cleanupMedia();
-            throw new IllegalStateException(
-                    "Could not open the audio device.",
-                    exception
-            );
-        }
+        return NetworkConfig.UDP_RELAY_HOST;
     }
 
-    private void handleCapturedFrame(byte[] frame) {
-        if (muted) {
-            return;
+    private int relayPortFor(String roomName) {
+        if (Objects.equals(roomName, announcedGroupRoom)
+                && relayPort > 0) {
+            return relayPort;
         }
-
-        String targetIp;
-        int targetPort;
-
-        synchronized (this) {
-            if (state == VoiceCallState.GROUP_ACTIVE) {
-                targetIp = relayIp;
-                targetPort = relayPort;
-            } else if (state == VoiceCallState.ACTIVE) {
-                targetIp = remoteIp;
-                targetPort = remotePort;
-            } else {
-                return;
-            }
-        }
-
-        if (targetIp == null || targetPort < 1 || transport == null) {
-            return;
-        }
-
-        try {
-            transport.send(frame, targetIp, targetPort);
-        } catch (IOException exception) {
-            throw new IllegalStateException(
-                    "Could not send voice audio through UDP.",
-                    exception
-            );
-        }
+        return NetworkConfig.UDP_RELAY_PORT;
     }
 
-    private void handleIncomingFrame(byte[] frame) {
-        AudioPlayback currentPlayback;
-
-        synchronized (this) {
-            currentPlayback = playback;
+    private String requireNickname() {
+        if (nickname == null || nickname.isBlank()) {
+            throw new IllegalStateException("Primero inicia sesión.");
         }
-
-        if (currentPlayback != null && currentPlayback.isRunning()) {
-            currentPlayback.play(frame);
-        }
+        return nickname;
     }
 
-    private void requireRelayEndpoint(String roomName) {
-        if (relayIp == null
-                || relayPort < 1
-                || !roomName.equals(groupRoom)) {
-            throw new IllegalStateException(
-                    "The group voice relay endpoint was not received."
-            );
-        }
+    private void requireIdle() {
+        requireState(State.IDLE, "Ya hay una llamada en curso.");
     }
 
-    private String requireLocalNickname() {
-        if (localNickname == null || localNickname.isBlank()) {
-            throw new IllegalStateException(
-                    "A local nickname must be configured before using voice calls."
-            );
-        }
-
-        return localNickname;
-    }
-
-    private void requireIdle(String message) {
-        if (state != VoiceCallState.IDLE) {
-            throw new IllegalStateException(message);
-        }
-    }
-
-    private void requireState(
-            VoiceCallState expected,
-            String message
-    ) {
+    private void requireState(State expected, String message) {
         if (state != expected) {
             throw new IllegalStateException(message);
         }
     }
 
-    private void requireExpectedPeer(String nickname) {
-        String validatedNickname = requireText(nickname, "nickname");
-
-        if (!validatedNickname.equals(peerNickname)) {
-            throw new IllegalStateException(
-                    "Unexpected call participant: " + validatedNickname
-            );
+    private void resetCall() {
+        if (media != null) {
+            media.close();
+            media = null;
         }
+        peer = null;
+        peerIp = null;
+        peerPort = -1;
+        groupRoom = null;
+        groupHost = false;
+        muted = false;
+        state = State.IDLE;
     }
 
     private static String requireText(String value, String fieldName) {
         if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(
-                    fieldName + " cannot be blank."
-            );
+            throw new IllegalArgumentException(fieldName + " no puede estar vacío.");
         }
-
-        return value;
+        return value.trim();
     }
 
-    private static void validateEndpoint(String ip, int port) {
-        requireText(ip, "ip");
-
-        if (port < 1 || port > 65535) {
-            throw new IllegalArgumentException(
-                    "port must be between 1 and 65535."
-            );
-        }
-    }
-
-    private static String resolveLocalIp() {
+    private static String localIp() {
         String configured = System.getProperty("chat.voice.host");
-
         if (configured != null && !configured.isBlank()) {
-            return configured;
+            return configured.trim();
         }
 
         try {
             return InetAddress.getLocalHost().getHostAddress();
         } catch (UnknownHostException exception) {
             return "127.0.0.1";
-        }
-    }
-
-    private void cleanupAndReset() {
-        cleanupMedia();
-        peerNickname = null;
-        remoteIp = null;
-        remotePort = -1;
-        groupRoom = null;
-        relayIp = null;
-        relayPort = -1;
-        muted = false;
-        state = VoiceCallState.IDLE;
-    }
-
-    private void cleanupMedia() {
-        if (microphone != null) {
-            microphone.close();
-            microphone = null;
-        }
-
-        if (transport != null) {
-            transport.close();
-            transport = null;
-        }
-
-        if (playback != null) {
-            playback.close();
-            playback = null;
         }
     }
 }

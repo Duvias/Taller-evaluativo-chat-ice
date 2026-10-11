@@ -21,13 +21,10 @@ import distributed.chat.UserNotFound;
 import com.zeroc.Ice.LocalException;
 import java.util.Set;
 
-import java.util.Set;
-
 public class ChatServiceImpl implements ChatService {
 
     private final UserManager userManager;
     private final RoomManager roomManager;
-    @SuppressWarnings("unused")
     private final FileManager fileManager;
     private final VoiceManager voiceManager;
 
@@ -116,6 +113,8 @@ public class ChatServiceImpl implements ChatService {
             }
         }
 
+        roomManager.removeUserFromAllRooms(nickname);
+        voiceManager.disconnect(nickname);
         System.out.println("[LOGOUT] Usuario desconectado: " + nickname);
     }
 
@@ -233,6 +232,57 @@ public class ChatServiceImpl implements ChatService {
             FileChunk chunk,
             Current current
     ) throws UserNotFound, RoomNotFound, NotInRoom {
+        fileManager.validateChunk(chunk);
+
+        if (sender == null || !sender.equals(chunk.sender)) {
+            throw new IllegalArgumentException(
+                    "El remitente del fragmento no coincide con el usuario autenticado."
+            );
+        }
+
+        if (targetType == TargetType.User) {
+            requireConnectedUser(sender);
+            ClientCallbackPrx receiver = requireConnectedUser(target);
+
+            try {
+                receiver.receiveFileChunk(targetType, target, chunk);
+            } catch (LocalException exception) {
+                throw new UserNotFound(target);
+            }
+            return;
+        }
+
+        if (targetType == TargetType.Room) {
+            if (!roomManager.roomExists(target)) {
+                throw new RoomNotFound(target);
+            }
+            if (!roomManager.isMember(sender, target)) {
+                throw new NotInRoom(sender, target);
+            }
+
+            for (String member : roomManager.membersOf(target)) {
+                if (member.equals(sender)) {
+                    continue;
+                }
+
+                ClientCallbackPrx callback = userManager.find(member);
+                if (callback != null) {
+                    try {
+                        callback.receiveFileChunk(
+                                targetType,
+                                target,
+                                chunk
+                        );
+                    } catch (LocalException ignored) {
+                    }
+                }
+            }
+            return;
+        }
+
+        throw new IllegalArgumentException(
+                "Tipo de destino de archivo desconocido."
+        );
     }
 
     // =========================
@@ -396,7 +446,7 @@ public class ChatServiceImpl implements ChatService {
                 callback.groupCallStarted(
                         roomName,
                         host,
-                        NetworkConfig.ICE_HOST,
+                        NetworkConfig.UDP_RELAY_HOST,
                         voiceManager.getRelayPort()
                 );
             } catch (RuntimeException ignored) {
@@ -443,7 +493,7 @@ public class ChatServiceImpl implements ChatService {
             joiningCallback.groupCallStarted(
                     roomName,
                     groupCall.getHost(),
-                    NetworkConfig.ICE_HOST,
+                    NetworkConfig.UDP_RELAY_HOST,
                     voiceManager.getRelayPort()
             );
         } catch (RuntimeException exception) {
@@ -564,13 +614,10 @@ public class ChatServiceImpl implements ChatService {
     private Set<String> requireRoom(
             String roomName
     ) throws RoomNotFound {
-        Set<String> members = roomManager.rooms().get(roomName);
-
-        if (members == null) {
+        if (!roomManager.roomExists(roomName)) {
             throw new RoomNotFound(roomName);
         }
-
-        return members;
+        return roomManager.membersOf(roomName);
     }
 
     private void requireRoomMember(
